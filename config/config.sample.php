@@ -719,7 +719,14 @@ $CONFIG = array(
  * indicates if a Web server can write files to that folder.
  */
  'apps_paths' =>
-
+   array (
+     array (
+       'path' => OC::$SERVERROOT.'/apps',
+       'url' => '/apps',
+       'writable' => true,
+     )
+   ),
+	
 /**
  * Previews
  *
