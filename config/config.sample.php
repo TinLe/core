@@ -711,6 +711,16 @@ $CONFIG = array(
 	'https://itunes.apple.com/us/app/owncloud/id543672169?mt=8',
 
 /**
+ * Use the ``apps_paths`` parameter to set the location of the Apps directory,
+ * which should be scanned for available apps, and where user-specific apps
+ * should be installed from the Apps store. The ``path`` defines the absolute
+ * file system path to the app folder. The key ``url`` defines the HTTP Web path
+ * to that folder, starting from the ownCloud webroot. The key ``writable``
+ * indicates if a Web server can write files to that folder.
+ */
+ 'apps_paths' =>
+
+/**
  * Previews
  *
  * ownCloud supports previews of image files, the covers of MP3 files, and text
