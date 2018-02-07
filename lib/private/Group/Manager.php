@@ -71,6 +71,9 @@ class Manager extends PublicEmitter implements IGroupManager {
 	/** @var \OC\MembershipManager $membershipManager */
 	private $membershipManager;
 
+	/** @var \OC\Group\SyncService $syncService */
+	private $syncService;
+
 	/** @var CappedMemoryCache $cachedGroups */
 	private $cachedGroups;
 
@@ -90,13 +93,15 @@ class Manager extends PublicEmitter implements IGroupManager {
 	 * @param \OC\User\Manager $userManager
 	 * @param \OC\MembershipManager $membershipManager
 	 * @param \OC\Group\GroupMapper $groupMapper
+	 * @param \OC\Group\SyncService $syncService
 	 * @param \OCP\IDBConnection $db
 	 */
-	public function __construct(\OC\User\Manager $userManager, \OC\MembershipManager $membershipManager, \OC\Group\GroupMapper $groupMapper, \OCP\IDBConnection $db) {
+	public function __construct(\OC\User\Manager $userManager, \OC\MembershipManager $membershipManager, \OC\Group\GroupMapper $groupMapper, \OC\Group\SyncService $syncService, \OCP\IDBConnection $db) {
 		$this->db = $db;
 		$this->userManager = $userManager;
 		$this->groupMapper = $groupMapper;
 		$this->membershipManager = $membershipManager;
+		$this->syncService = $syncService;
 		$this->cachedGroups = new CappedMemoryCache();
 		$this->cachedUserGroups = new CappedMemoryCache();
 		$cachedGroups = & $this->cachedGroups;
@@ -175,22 +180,20 @@ class Manager extends PublicEmitter implements IGroupManager {
 	 * Create group using group id $gid. Displayname will be set to $gid.
 	 *
 	 * @param string $gid
+	 * @throws UniqueConstraintViolationException
 	 * @throws \Exception
 	 * @return \OCP\IGroup|null
 	 */
 	public function createGroup($gid) {
 		if (!$this->isValid($gid)) {
 			return null;
-		} else if ($this->groupExists($gid)) {
-			$l = \OC::$server->getL10N('lib');
-			throw new \Exception($l->t('The group name is already being used'));
 		}
-
-		$this->emit('\OC\Group', 'preCreate', [$gid]);
 
 		if (empty($this->backends)) {
 			$this->addBackend(new Database($this->db));
 		}
+
+		$this->emit('\OC\Group', 'preCreate', [$gid]);
 
 		// Create group in the first added backend service
 		foreach ($this->backends as $backend) {
@@ -216,6 +219,7 @@ class Manager extends PublicEmitter implements IGroupManager {
 	 * @param string $gid
 	 * @param GroupInterface $backend
 	 * @throws UniqueConstraintViolationException
+	 * @throws \Exception
 	 * @return \OCP\IGroup
 	 */
 	public function createGroupFromBackend($gid, $backend) {
@@ -435,39 +439,13 @@ class Manager extends PublicEmitter implements IGroupManager {
 	 */
 	private function createGroupFromBackendAndCache($gid, $backend) {
 		// Add group internally
-		$backendGroup = $this->newBackendGroup($gid, $backend);
+		$backendGroup = $this->syncService->createOrSyncGroup($gid, $backend);
 
 		// If group added successfully internally, ensure that caches are cleared
 		$this->clearCachedGroup($gid);
 
 		// Retrieve group object for newly created backend group
 		return $this->getGroupObject($backendGroup);
-	}
-
-	/**
-	 * @param string $gid
-	 * @param GroupInterface $backend
-	 * @throws UniqueConstraintViolationException
-	 * @return BackendGroup|\OCP\AppFramework\Db\Entity
-	 */
-	private function newBackendGroup($gid, $backend) {
-		// Create new backend group, set group id, displayname and backend class
-		$backendGroup = new BackendGroup();
-		$backendGroup->setGroupId($gid);
-
-		$displayName = $gid;
-		if ($backend->implementsActions(\OC\Group\Backend::GROUP_DETAILS)) {
-			$groupData = $backend->getGroupDetails($gid);
-			if (is_array($groupData) && isset($groupData['displayName'])) {
-				// take the display name from the backend
-				$displayName = $groupData['displayName'];
-			}
-		}
-		$backendGroup->setDisplayName($displayName);
-		$backendGroup->setBackend(get_class($backend));
-
-		// Add group internally
-		return $this->groupMapper->insert($backendGroup);
 	}
 
 	/**
@@ -588,12 +566,19 @@ class Manager extends PublicEmitter implements IGroupManager {
 
 	/**
 	 * @param string $gid
+	 * @throws \Exception
 	 * @return bool
 	 */
 	private function isValid($gid) {
 		if ($gid === '' || is_null($gid)) {
 			return false;
 		}
+
+		if ($this->groupExists($gid)) {
+			$l = \OC::$server->getL10N('lib');
+			throw new \Exception($l->t('The group name is already being used'));
+		}
+
 		return true;
 	}
 
@@ -629,11 +614,13 @@ class Manager extends PublicEmitter implements IGroupManager {
 	 *
 	 * @param GroupMapper $mapper
 	 * @param array $backends
+	 * @param SyncService $syncService
 	 * @return array
 	 */
-	public function reset(GroupMapper $mapper, $backends) {
-		$return = [$this->groupMapper, $this->backends];
+	public function reset(GroupMapper $mapper, $backends, SyncService $syncService) {
+		$return = [$this->groupMapper, $this->backends, $this->syncService];
 		$this->groupMapper = $mapper;
+		$this->syncService = $syncService;
 		$this->backends = $backends;
 		$this->clearCaches();
 
